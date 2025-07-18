@@ -4,8 +4,6 @@ This repo serves as a public space for coordination between **Second Life develo
 
 > **Please Note:** This is **not** the place to file general feature requests or bug reports.
 
----
-
 ## 🚫 Filing Feature Requests or Bugs?
 
 Please submit all user-facing bugs, feature ideas, and UI feedback to our community portal:
@@ -13,8 +11,6 @@ Please submit all user-facing bugs, feature ideas, and UI feedback to our commun
 👉 [feedback.secondlife.com](https://feedback.secondlife.com)
 
 This repository is **only for work that has already been accepted** and is ready for collaborative engineering.
-
----
 
 ## ✅ What Goes Here
 
@@ -24,8 +20,6 @@ This repository is **only for work that has already been accepted** and is ready
 - Coordination between **Linden Lab developers** and **external contributors**
 
 For more details on how our bounty program works, see our [BOUNTY.md](./BOUNTY.md) guide.
-
----
 
 ## 💎 Interested in Bounties?
 
