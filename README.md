@@ -21,9 +21,9 @@ This repository is **only for work that has already been accepted** and is ready
 
 For more details on how our bounty program works, see our [REWARDS.md](https://github.com/secondlife/.github/blob/main/REWARDS.md) guide.
 
-## 💎 Interested in Bounties?
+## 💎 Interested in Rewards?
 
-We occasionally offer rewards for solving approved issues via the Opire system. Look for issues labeled `💎 bounty` or tagged by the [Opire bot](https://opire.dev). Check out [`BOUNTY.md`](https://github.com/secondlife/.github/blob/main/BOUNTY.md) for detailed information.
+We occasionally offer rewards for solving approved issues via the Opire system. Look for issues labeled `💎 reward` or tagged by the [Opire bot](https://opire.dev). Check out [`REWARDS.md`](https://github.com/secondlife/.github/blob/main/REWARDS.md) for detailed information.
 
 ## 🤝 Contributing
 
