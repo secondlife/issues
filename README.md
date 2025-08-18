@@ -19,7 +19,7 @@ This repository is **only for work that has already been accepted** and is ready
 - Discussions and clarifications on **scoped technical work**
 - Coordination between **Linden Lab developers** and **external contributors**
 
-For more details on how our bounty program works, see our [BOUNTY.md](./BOUNTY.md) guide.
+For more details on how our bounty program works, see our [REWARDS.md](https://github.com/secondlife/.github/blob/main/REWARDS.md) guide.
 
 ## 💎 Interested in Bounties?
 
