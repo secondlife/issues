@@ -27,10 +27,10 @@ type LLEventsProto = {
     _handlers: { [string]: { EventHandler } },
 
     -- Dynamic event handler management
-    -- Like EventEmitter, these return `self` so calls can be chained.
-    on: (self: LLEventsProto, event_name: string, handler: EventHandler) -> LLEventsProto,
-    off: (self: LLEventsProto, event_name: string, handler: EventHandler?) -> LLEventsProto,
-    once: (self: LLEventsProto, event_name: string, handler: EventHandler) -> LLEventsProto,
+    -- Returns the registered handler so it can be unregistered later, if an anonymous function.
+    on: (self: LLEventsProto, event_name: string, handler: EventHandler) -> EventHandler,
+    once: (self: LLEventsProto, event_name: string, handler: EventHandler) -> EventHandler,
+    off: (self: LLEventsProto, event_name: string, handler: EventHandler?) -> boolean,
     listeners: (self: LLEventsProto, event_name: string) -> { EventHandler },
     eventNames: (self: LLEventsProto) -> { string },
 
@@ -39,46 +39,93 @@ type LLEventsProto = {
     _create_event_catcher: (self: LLEventsProto, name: string) -> EventHandler,
 }
 
+local DetectedEvent = {}
+DetectedEvent.__index = DetectedEvent
+
+-- I'm lazy, but assume this was something sensible
+type DetectedEvent = any
+
+-- These won't actually be a table in prod, but a userdata that holds an integer and two booleans.
+-- Relatively low-overhead.
+function DetectedEvent:new(index: number, canAdjustDamage: boolean): DetectedEvent
+    return setmetatable({
+        index=index,
+        valid=true,
+        canAdjustDamage=canAdjustDamage,
+    }, self)
+end
+
+function DetectedEvent:adjustDamage(damage: number)
+    assert(self.valid and self.canAdjustDamage)
+    ll.AdjustDamage(self.index, damage)
+end
+
+local function _makeWrapper(detected_name)
+    local underlyingFunc = ll['Detected' .. detected_name]
+    return function(obj: DetectedEvent)
+        if not obj.valid then
+            error(`{obj} is not valid anymore`)
+        end
+        return underlyingFunc(obj.index)
+    end
+end
+
+local DETECTED_TYPES = {
+    'Owner',
+    'Name',
+    'Face',
+    'LinkNumber',
+    'Key',
+    -- Etc.
+}
+
+-- Slap the wrapper methods onto `DetectedEvent`
+for i, v in DETECTED_TYPES do
+    DetectedEvent['get' .. v] = _makeWrapper(v)
+end
+
+
 local LLEvents = {_handlers = {}} :: LLEventsProto
 
 -- Add a dynamic event handler
-function LLEvents:on(event_name: string, handler: EventHandler): LLEventsProto
+function LLEvents:on(event_name: string, handler: EventHandler): EventHandler
     -- TODO: Make this error() when an unrecognized event name is used
     local existing_handlers = self._handlers[event_name] or {}
     table.insert(existing_handlers, handler)
     self._handlers[event_name] = existing_handlers
     -- Note: this is where object touchability and such would be updated by the sim
     -- if there were no handlers before
-    return self
+    return handler
 end
 
 -- Remove event handler(s)
 function LLEvents:off(event_name: string, handler: EventHandler?): boolean
     -- TODO: Make this error() when an unrecognized event name is used
-    if not handler then
-        -- Remove all handlers for this event
-        -- The final version will update touchability and such if there was a touch handler here before.
-        self._handlers[event_name] = nil
-        return self
-    end
+
+    -- We used to support a `nil` handler as an indication to unregister _all_ handlers
+    -- of a given type, but this lead to subtle bugs when the passed in handler
+    -- was expected to be non-nil and in fact was.
+    -- All events or handlers for events may be unsubscribed by looping over
+    -- `eventNames()` and `listeners()`, respectively.
+    assert(handler ~= nil)
 
     local handlers = self._handlers[event_name]
     if not handlers then
         -- Nothing to unsubscribe
-        return self
+        return false
     end
 
     -- Find the handler first, then remove it
     local found_index = nil        
-    for i = 1, #handlers do
+    for i=#handlers,1,-1 do
         if handlers[i] == handler then
             found_index = i
-            break  -- Find the first match, then stop
+            break  -- Find the last match, then stop
         end
     end
 
     if not found_index then
-        return self
+        return false
     end
 
     table.remove(handlers, found_index)
@@ -89,11 +136,11 @@ function LLEvents:off(event_name: string, handler: EventHandler?): boolean
         -- Note: this is where object touchability and such would be updated by the sim
         -- if there were no handlers left
     end
-    return self
+    return true
 end
 
 -- Add a one-time event handler
-function LLEvents:once(event_name: string, handler: EventHandler): LLEventsProto
+function LLEvents:once(event_name: string, handler: EventHandler): EventHandler
     local function wrapper(...: any)
         -- Remove the wrapper BEFORE calling the handler to avoid issues if handler errors
         -- TODO: How would calling `:off(event_name, handler)` work before this triggers?
@@ -124,10 +171,30 @@ end
 
 -- Call dynamic handlers for these events
 function LLEvents:_handle_event(name: string, ...: any): ()
-    local handlers = table.clone(self._handlers)
+    local handlers = table.clone(self._handlers[name] or {})
+    local event_args = ...
+
+    local event_wrappers = {}
+    if table.find(_MULTI_EVENT_NAMES, name) then
+        -- Create `DetectedEvent` wrappers
+        local num_detected = event_args
+        for i=1,num_detected do
+            -- These are 0-indexed for now.
+            table.insert(event_wrappers, DetectedEvent:new(i - 1, name == 'damage'))
+        end
+        -- Replace the event args with our table of event wrappers
+        event_args = event_wrappers
+    end
+
+    -- Do the actual event handling
     for i, handler in handlers do
         -- We explicitly want errors to bubble up to the global error handler, no pcall().
-        handler(...)
+        handler(event_args)
+    end
+
+    -- Now clean up and mark those wrappers invalid so people know not to use them anymore
+    for i, wrapper in event_wrappers do
+        wrapper.valid = false
     end
 end
 
@@ -185,9 +252,9 @@ type LLTimersProto = {
     --       even if we don't need to do anything, as long as there's a scheduled timer active.
     -- NOTE: timers are not in wallclock time, they are in rezzed-time, they do not tick while
     --       objects are de-rezzed!
-    on: (self: LLTimersProto, seconds: number, handler: EventHandler) -> LLTimersProto,
-    off: (self: LLTimersProto, handler: EventHandler?) -> LLTimersProto,
-    once: (self: LLTimersProto, seconds: number, handler: EventHandler) -> LLTimersProto,
+    on: (self: LLTimersProto, seconds: number, handler: EventHandler) -> EventHandler,
+    once: (self: LLTimersProto, seconds: number, handler: EventHandler) -> EventHandler,
+    off: (self: LLTimersProto, handler: EventHandler?) -> boolean,
 
     -- Internal API
     _tick: (self: LLTimersProto) -> (),
@@ -258,7 +325,7 @@ function LLTimers:_scheduleNextTick()
     ll.SetTimerEvent(next_interval)
 end
 
-function LLTimers:on(seconds: number, handler: EventHandler): LLTimersProto
+function LLTimers:on(seconds: number, handler: EventHandler): EventHandler
     assert(seconds > 0)
     table.insert(self._timers, {
         nextRun=os.clock() + seconds,
@@ -266,10 +333,10 @@ function LLTimers:on(seconds: number, handler: EventHandler): LLTimersProto
         handler=handler,
     } :: _LLTimerData)
     self:_scheduleNextTick()
-    return self
+    return handler
 end
 
-function LLTimers:once(seconds: number, handler: EventHandler): LLTimersProto
+function LLTimers:once(seconds: number, handler: EventHandler): EventHandler
     assert(seconds > 0)
     table.insert(self._timers, {
         nextRun=os.clock() + seconds,
@@ -277,18 +344,20 @@ function LLTimers:once(seconds: number, handler: EventHandler): LLTimersProto
         handler=handler,
     } :: _LLTimerData)
     self:_scheduleNextTick()
-    return self
+    return handler
 end
 
-function LLTimers:off(handler: EventHandler): LLTimersProto
+function LLTimers:off(handler: EventHandler): boolean
+    local found_index = false
     for i=#self._timers,1,-1 do
         if self._timers[i].handler == handler then
             table.remove(self._timers, i)
+            found_index = true
             break
         end
     end
     self:_scheduleNextTick()
-    return self
+    return found_index
 end
 
 
@@ -307,22 +376,25 @@ end
 
 -- Example using the convenient assignment syntax
 -- This is equivalent to:
--- LLEvents:on("collision_start", function(num) ... end)
-function LLEvents.collision_start(num)
-    print(`[Assignment Handler] Collision detected from detector {num}`)
+-- LLEvents:on("collision_start", function(evts) ... end)
+function LLEvents.collision_start(evts: {DetectedEvent})
+    -- Loop over the events
+    for _, evt in evts do
+        print(`[Assignment Handler] Collision detected {evt:getKey()}`)
+    end
 end
 
 
 local function main()
     -- Example: Add a handler that logs all touch events
-    LLEvents:on("touch_start", function(num)
-        print(`[Global] I was touched by {ll.DetectedName(0)}`)
+    LLEvents:on("touch_start", function(evts: {DetectedEvent})
+        print(`[Global] I was touched by {evts[1]:getName()}`)
     end)
 
     -- Example: Add another handler that can be removed later
     local counter = 0
     local function count_handler()
-        counter = counter + 1
+        counter += 1
         print(`[Counter] Touch count: {counter}`)
 
         -- Remove this handler after 5 touches
