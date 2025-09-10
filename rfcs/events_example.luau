@@ -57,7 +57,7 @@ end
 
 function DetectedEvent:adjustDamage(damage: number)
     assert(self.valid and self.canAdjustDamage)
-    ll.AdjustDamage(self.index, damage)
+    ll.AdjustDamage(self.index - 1, damage)
 end
 
 local function _makeWrapper(detected_name)
@@ -66,7 +66,8 @@ local function _makeWrapper(detected_name)
         if not obj.valid then
             error(`{obj} is not valid anymore`)
         end
-        return underlyingFunc(obj.index)
+        -- The underlying `ll.Detected*()` functions are 0-indexed for now.
+        return underlyingFunc(obj.index - 1)
     end
 end
 
@@ -172,24 +173,23 @@ end
 -- Call dynamic handlers for these events
 function LLEvents:_handle_event(name: string, ...: any): ()
     local handlers = table.clone(self._handlers[name] or {})
-    local event_args = ...
+    local event_args = table.pack(...)
 
     local event_wrappers = {}
     if table.find(_MULTI_EVENT_NAMES, name) then
         -- Create `DetectedEvent` wrappers
-        local num_detected = event_args
+        local num_detected = ...
         for i=1,num_detected do
-            -- These are 0-indexed for now.
-            table.insert(event_wrappers, DetectedEvent:new(i - 1, name == 'damage'))
+            table.insert(event_wrappers, DetectedEvent:new(i, name == 'damage'))
         end
         -- Replace the event args with our table of event wrappers
-        event_args = event_wrappers
+        event_args = {event_wrappers}
     end
 
     -- Do the actual event handling
     for i, handler in handlers do
         -- We explicitly want errors to bubble up to the global error handler, no pcall().
-        handler(event_args)
+        handler(table.unpack(event_args))
     end
 
     -- Now clean up and mark those wrappers invalid so people know not to use them anymore
@@ -365,6 +365,7 @@ end
 -- this won't be in actual code you write, this is just to wire up the example code to how events are currently handled
 touch_start = LLEvents:_create_event_catcher("touch_start")
 collision_start = LLEvents:_create_event_catcher("collision_start")
+listen = LLEvents:_create_event_catcher("listen")
 function timer()
     LLTimers:_tick()
 end
@@ -384,6 +385,10 @@ function LLEvents.collision_start(evts: {DetectedEvent})
     end
 end
 
+function LLEvents.listen(channel, name, id, msg)
+    print(`Got message: {msg}`)
+end
+
 
 local function main()
     -- Example: Add a handler that logs all touch events
@@ -391,6 +396,7 @@ local function main()
         print(`[Global] I was touched by {evts[1]:getName()}`)
     end)
 
+    ll.Listen(1, "", "", "")
     -- Example: Add another handler that can be removed later
     local counter = 0
     local function count_handler()
